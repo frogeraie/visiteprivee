@@ -1,15 +1,6 @@
-
-if( process.argv.length < 3 ) {
-	console.log(
-		'Usage: \n' +
-		'node stream-server.js <secret> [<stream-port> <websocket-port>]'
-	);
-	process.exit();
-}
-
-var STREAM_SECRET = process.argv[2],
-	STREAM_PORT = process.argv[3] || 8082,
-	WEBSOCKET_PORT = process.argv[4] || 8084,
+var STREAM_SECRET = process.argv[3],
+	STREAM_PORT = process.argv[4] || 8082,
+	WEBSOCKET_PORT = process.argv[5] || 8084,
 	STREAM_MAGIC_BYTES = 'jsmp'; // Must be 4 bytes
 
 var width = 320,
@@ -73,16 +64,55 @@ var streamServer = require('http').createServer( function(request, response) {
 console.log('Listening for MPEG Stream on http://127.0.0.1:'+STREAM_PORT+'/<secret>/<width>/<height>');
 console.log('Awaiting WebSocket connections on ws://127.0.0.1:'+WEBSOCKET_PORT+'/');
 
-var express = require('express')
-var app = express()
+var serialport = require("serialport"),		// include the serialport library
+	SerialPort  = serialport.SerialPort,	   // make a local instance of serial
+	servi = require('servi'),		// include the servi library
+	app = new servi(false);		// servi instance
 
-app.set('port', (process.env.PORT || 5000))
-app.use(express.static(__dirname + '/public'))
+// configure the server's behavior:
+app.port(8080);						// port number to run the server on
+app.serveFiles("public");			// serve all static HTML files from /public
 
-app.get('/', function(request, response) {
-  response.send('Hello World!')
-})
 
-app.listen(app.get('port'), function() {
-  console.log("Node app is running at localhost:" + app.get('port'))
-})
+// respond to web GET requests for the index.html page:
+app.route('/', sendIndexPage);
+app.route('/index*', sendIndexPage);
+// take anything that begins with /output as an LED request:
+app.route('/output/:color/:brightness', sendToSerial);
+
+// now that everything is configured, start the server:
+app.start();	
+console.log("Listening for new clients on port 8080");
+
+ 
+// the third word of the command line command is serial port name:
+var portName = process.argv[2];				  
+// print out the port you're listening on:
+console.log("opening serial port: " + portName);	
+
+// open the serial port. Uses the command line parameter:
+var myPort = new SerialPort(portName, { 
+	baudRate: 9600,
+	// look for return and newline at the end of each data packet:
+	parser: serialport.parsers.readline("\r\n") 
+});
+
+/* The rest of the functions are event-driven. 
+   They only get called when the server gets incoming GET requests:
+*/
+
+// this function responds to a GET request with the index page:
+function sendIndexPage(request) {
+  request.serveFile('/index.html');
+}
+
+function sendToSerial(request) {
+  // get the parameters from the URL:
+  var brightnessCommand = request.params.color + request.params.brightness;
+  console.log("received "+ brightnessCommand);
+
+  // send it out the serial port:
+  myPort.write(brightnessCommand);
+  // send the data and close the connection:
+  request.respond(brightnessCommand);
+}
